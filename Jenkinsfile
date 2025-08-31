@@ -26,11 +26,18 @@ node {
             withSonarQubeEnv('SonarQubeLocalServer') {
                 sh " mvn sonar:sonar -Dintegration-tests.skip=true -Dmaven.test.failure.ignore=true"
             }
-            timeout(time: 1, unit: 'MINUTES') {
+            timeout(time: 5, unit: 'MINUTES') {
+               try {
                 def qg = waitForQualityGate() // Reuse taskId previously collected by withSonarQubeEnv
                 if (qg.status != 'OK') {
                     error "Pipeline aborted due to quality gate failure: ${qg.status}"
-                }
+                }else {
+                                 echo "Quality Gate OK : ${qg.status}"
+                             }
+                             } catch (err) {
+                                         // Gestion d'erreur si le serveur ne répond pas à temps
+                                         error "Impossible de récupérer le Quality Gate : ${err}"
+                                     }
             }
         }
 
