@@ -1,88 +1,70 @@
-pipeline {
-    agent any
-    environment {
-        ENV_NAME = "${getEnvName(env.BRANCH_NAME)}"
-        CONTAINER_NAME = "calculator-${ENV_NAME}"
-        CONTAINER_TAG = "${getTag(env.BUILD_NUMBER, env.BRANCH_NAME)}"
-        HTTP_PORT = "${getHTTPPort(env.BRANCH_NAME)}"
-        EMAIL_RECIPIENTS = "scopetest24@gmail.com"
-    }
-    stages {
+def ENV_NAME = getEnvName(env.BRANCH_NAME)
+def CONTAINER_NAME = "calculator-"+ENV_NAME
+def CONTAINER_TAG = getTag(env.BUILD_NUMBER, env.BRANCH_NAME)
+def HTTP_PORT = getHTTPPort(env.BRANCH_NAME)
+def EMAIL_RECIPIENTS = "scopetest24@gmail.com"
+
+node {
+    try {
         stage('Initialize') {
-            steps {
-                script {
-                    def dockerHome = tool 'dockerlatest'
-                    def mavenHome = tool 'mavenlatest'
-                    env.PATH = "${dockerHome}/bin:${mavenHome}/bin:${env.PATH}"
-                }
-            }
+            def dockerHome = tool 'dockerlatest'
+            def mavenHome = tool 'mavenlatest'
+            env.PATH = "${dockerHome}/bin:${mavenHome}/bin:${env.PATH}"
         }
+
         stage('Checkout') {
-            steps {
-                checkout scm
-            }
+            checkout scm
         }
+
         stage('Build with test') {
-            steps {
-                sh "mvn clean install"
-            }
+            sh "mvn clean install"
         }
+
         stage('Sonarqube Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQubeLocalServer') {
-                    sh "mvn sonar:sonar -Dintegration-tests.skip=true -Dmaven.test.failure.ignore=true"
-                }
-                script {
-                    timeout(time: 1, unit: 'MINUTES') {
-                        def qg = waitForQualityGate()
-                        if (qg.status != 'OK') {
-                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
-                        }
-                    }
+            withSonarQubeEnv('SonarQubeLocalServer') {
+                sh "mvn sonar:sonar -Dintegration-tests.skip=true -Dmaven.test.failure.ignore=true"
+            }
+
+            // Timeout augmenté pour éviter le problème d'attente
+            timeout(time: 5, unit: 'MINUTES') {
+                def qg = waitForQualityGate()
+                if (qg.status != 'OK') {
+                    error "Pipeline aborted due to quality gate failure: ${qg.status}"
                 }
             }
         }
-        stage('Image Prune') {
-            steps {
-                script { imagePrune(CONTAINER_NAME) }
+
+        stage("Docker: Image Prune") {
+            imagePrune(CONTAINER_NAME)
+        }
+
+        stage('Docker: Image Build') {
+            imageBuild(CONTAINER_NAME, CONTAINER_TAG)
+        }
+
+        stage('Docker: Push to Registry') {
+            withCredentials([usernamePassword(credentialsId: 'dockerhubcredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                pushToImage(CONTAINER_NAME, CONTAINER_TAG, USERNAME, PASSWORD)
             }
         }
-        stage('Image Build') {
-            steps {
-                script { imageBuild(CONTAINER_NAME, CONTAINER_TAG) }
+
+        stage('Docker: Run App') {
+            withCredentials([usernamePassword(credentialsId: 'dockerhubcredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                runApp(CONTAINER_NAME, CONTAINER_TAG, USERNAME, HTTP_PORT, ENV_NAME)
             }
         }
-        stage('Push to Docker Registry') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhubcredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                        pushToImage(CONTAINER_NAME, CONTAINER_TAG, USERNAME, PASSWORD)
-                    }
-                }
-            }
-        }
-        stage('Run App') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhubcredentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                        runApp(CONTAINER_NAME, CONTAINER_TAG, USERNAME, HTTP_PORT, ENV_NAME)
-                    }
-                }
-            }
-        }
-    }
-    post {
-        always {
-            deleteDir()
-            script { sendEmail(EMAIL_RECIPIENTS) }
-        }
+
+    } finally {
+        deleteDir()
+        sendEmail(EMAIL_RECIPIENTS)
     }
 }
 
+// ---------------- Docker functions ----------------
 def imagePrune(containerName) {
     try {
         sh "docker image prune -f"
-        sh "docker stop $containerName"
+        sh "docker stop $containerName || true"
     } catch (ignored) {}
 }
 
@@ -99,11 +81,12 @@ def pushToImage(containerName, tag, dockerUser, dockerPassword) {
 }
 
 def runApp(containerName, tag, dockerHubUser, httpPort, envName) {
-    sh "docker pull $dockerHubUser/$containerName"
+    sh "docker pull $dockerHubUser/$containerName:$tag"
     sh "docker run --rm --env SPRING_ACTIVE_PROFILES=$envName -d -p $httpPort:$httpPort --name $containerName $dockerHubUser/$containerName:$tag"
     echo "Application started on port: ${httpPort} (http)"
 }
 
+// ---------------- Utility functions ----------------
 def sendEmail(recipients) {
     mail(
         to: recipients,
@@ -114,12 +97,14 @@ def sendEmail(recipients) {
 
 String getEnvName(String branchName) {
     if (branchName == 'main') return 'prod'
-    return (branchName == 'develop') ? 'uat' : 'dev'
+    if (branchName == 'develop') return 'uat'
+    return 'dev'
 }
 
 String getHTTPPort(String branchName) {
     if (branchName == 'main') return '9003'
-    return (branchName == 'develop') ? '9002' : '9001'
+    if (branchName == 'develop') return '9002'
+    return '9001'
 }
 
 String getTag(String buildNumber, String branchName) {
