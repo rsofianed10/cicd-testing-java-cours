@@ -44,6 +44,6 @@ public class CalculatorController {
 		final CalculationModel response = calculatorService.calculate(calculationModel);
 
 		model.addAttribute("response", response);
-		return CALCULATOR_TEMPLATE; // cf. resources/templates/calculator.html
+		return CALCULATOR_TEMPLATE; // cf. resources/templates/calculator.html 
 	}
 }  
