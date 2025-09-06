@@ -46,4 +46,4 @@ public class CalculatorController {
 		model.addAttribute("response", response);
 		return CALCULATOR_TEMPLATE; // cf. resources/templates/calculator.html
 	}
-}
+}  
