@@ -48,5 +48,4 @@ public class CalculatorServiceImpl implements CalculatorService {
 		calculationModel.setFormattedSolution(solutionFormatter.format(response));
 		return calculationModel;
 	}
-
 }
